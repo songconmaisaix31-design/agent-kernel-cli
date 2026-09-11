@@ -146,6 +146,8 @@ test('stale and wrong-host state never authorizes PID-based stopping', { timeout
 test('invalid IDs and missing executables fail without creating an active task', async () => {
   const context = setup();
   assert.match((await command(context.store, 'result', '../../outside')).value.error, /Invalid task ID/);
+  await assert.rejects(exec(process.execPath, [cli, 'start', '--agent', 'program', '--cwd', context.cwd,
+    '--store', context.store, '--', 'agent-kernel-definitely-missing-executable']), /Executable not found/);
   const result = await command(context.store, 'status');
   assert.equal(result.value.phase, 'idle');
 });

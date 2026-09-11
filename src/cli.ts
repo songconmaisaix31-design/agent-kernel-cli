@@ -7,15 +7,18 @@ import { parseLimits } from './duration-policy.js';
 import { activeId, readState } from './run-store.js';
 import { readResult, startTask, stopTask } from './task-lifecycle.js';
 import { resolveCwd, resolveProgram } from './task-command.js';
+import { prepareCodex } from './codex-command.js';
 
 const help = `agent-kernel (local prototype)
   start --agent program --cwd <folder> [--timeout-ms <ms>] -- <executable> [args...]
+  start --agent codex --cwd <practice-repo> --prompt <task> [--timeout-ms <ms>]
   status [task-id] [--store <folder>]
   stop <task-id> [--store <folder>]
   result <task-id> [--store <folder>]
 Default store: ~/.agent-kernel-cli. All responses are JSON.
 start returns an ID; starting does not mean the agent has begun.
 Program mode runs a trusted local program without a shell or sandbox.
+Codex mode reuses ChatGPT login and always uses read-only sandbox; no approval escalation.
 Windows only for execution in this milestone; no remote execution.`;
 
 try {
@@ -35,11 +38,15 @@ try {
     });
     const store = values.store;
     if (command === 'start') {
-      if (positionals.length || values.agent !== 'program' || !values.cwd || !program[0]) throw new Error(help);
+      if (positionals.length || !['program', 'codex'].includes(values.agent) || !values.cwd) throw new Error(help);
+      if (values.agent === 'program' ? !program[0] : program.length > 0) throw new Error(help);
       if (values.prompt !== undefined && values['prompt-file'] !== undefined) throw new Error('Choose prompt or prompt-file.');
       const prompt = values['prompt-file'] ? readFileSync(values['prompt-file'], 'utf8') : values.prompt ?? '';
+      if (prompt.length > 64_000 || (values.agent === 'codex' && !prompt.trim())) throw new Error('Codex needs a nonempty prompt; maximum prompt length is 64000 characters.');
       const limits = parseLimits(values['timeout-ms'] === undefined ? {} : { timeoutMs: Number(values['timeout-ms']) });
-      const state = await startTask(store, { agent: 'program', cwd: resolveCwd(values.cwd), executable: resolveProgram(program[0]), args: program.slice(1), prompt, ...limits });
+      const cwd = resolveCwd(values.cwd);
+      const child = values.agent === 'codex' ? await prepareCodex() : { executable: resolveProgram(program[0]!), args: program.slice(1) };
+      const state = await startTask(store, { agent: values.agent as 'program' | 'codex', cwd, ...child, prompt, ...limits });
       console.log(JSON.stringify(state, null, 2));
     } else if (['status', 'stop', 'result'].includes(command)) {
       if (positionals.length > 1 || program.length) throw new Error('Expected at most one task ID.');

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { activeId, runPath, writeJson } from './run-store.js';
 import type { ProcessResult, RunState, TaskInput } from './run-types.js';
 import { launchWindows } from './windows-process.js';
+import { readCodexResult } from './codex-command.js';
 
 const [store, id] = process.argv.slice(2);
 if (!store || !id) throw new Error('Supervisor requires a store and task ID.');
@@ -54,8 +55,17 @@ try {
     : outcome.reason === 'timed_out' ? 'timed_out'
     : outcome.reason === 'completed' && outcome.exitCode === 0 ? 'succeeded' : 'failed';
   const stdout = join(directory, 'stdout.log');
-  const text = existsSync(stdout) ? readFileSync(stdout, 'utf8').slice(0, 256_000) : '';
-  writeJson(join(directory, 'result.json'), { phase: state.phase, ...outcome, text, finishedAt: new Date().toISOString(), agent: task.agent });
+  let text = existsSync(stdout) ? readFileSync(stdout, 'utf8').slice(0, 256_000) : '';
+  let codex: ReturnType<typeof readCodexResult> | undefined;
+  if (task.agent === 'codex' && state.phase === 'succeeded') {
+    try { codex = readCodexResult(stdout); text = codex.text; }
+    catch (error) {
+      state.phase = 'failed';
+      state.reason = 'codex_incomplete';
+      outcome = { ...outcome, reason: state.reason, detail: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  writeJson(join(directory, 'result.json'), { phase: state.phase, ...outcome, text, codex, finishedAt: new Date().toISOString(), agent: task.agent });
   state.result = join(directory, 'result.json');
   persist();
   if (state.liveness === 'exited' && activeId(store) === id) unlinkSync(join(store, 'active'));

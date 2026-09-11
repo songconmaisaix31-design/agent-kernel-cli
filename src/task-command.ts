@@ -15,8 +15,9 @@ export function resolveProgram(name: string): string {
 }
 
 export function resolveCwd(input: string): string {
-  if (/^(ssh|wsl):\/\//i.test(input) || /^\\\\/.test(input)) throw new Error('Remote workspaces are unsupported. Run on the execution host.');
+  if (/^(ssh|wsl):\/\//i.test(input) || /^(\\\\|\/\/)/.test(input)) throw new Error('Remote workspaces are unsupported. Run on the execution host.');
   const cwd = realpathSync(resolve(input));
+  if (/^(\\\\|\/\/)/.test(cwd)) throw new Error('Remote workspaces are unsupported. Run on the execution host.');
   if (!statSync(cwd).isDirectory()) throw new Error('Working directory must be a folder.');
   return cwd;
 }
