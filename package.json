@@ -1,0 +1,16 @@
+{
+  "name": "agent-kernel-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "bin": { "agent-kernel": "dist/cli.js" },
+  "engines": { "node": ">=24" },
+  "packageManager": "pnpm@10.24.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-runtime.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --test-concurrency=1 tests/*.test.mjs"
+  },
+  "devDependencies": { "@types/node": "25.9.5", "typescript": "7.0.2" }
+}
