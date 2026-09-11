@@ -4,7 +4,9 @@
 
 旧成果：主仓库 C:/Users/DW/AppData/Local/OrcaKernelLab/code/orca-kernel，分支 kernel/v01-managed-dispatch，HEAD 01bd406abb787a6b2fd8064e66bcefb75971b8ff（Orca 1.4.188）；早期规则仓库 C:/Users/DW/orca/Multi-agent-kernel，HEAD 68e84c6f22b50676ab8a964af0a7b8dbb1223fd5。稳定开发 Orca 实测 1.4.199，保持运行。
 
-备份 D:/AgentKernelBackups/20260912-cli-reset：essential-0.bundle / essential-1.bundle 均已 verify、独立 clone、fsck、HEAD 检出；essential-recovery.json 记录 19 个工作树的提交和未提交文件副本校验。source-and-evidence.zip 是完整源码及旧验收材料归档，最终检查待完成。排除可重装 node_modules 和 reparse targets，原始文件保留。没有删除/reset/清理旧文件；旧 2 个 ready 任务不再派发，15 retained / 3 released 历史资源不改写。旧资源的进程状态仍 unverifiable；现场除本次开发终端外未发现旧 Kernel Agent，不能由此认定所有历史进程已退出。其他产品不受本轮控制。
+备份 D:/AgentKernelBackups/20260912-cli-reset：两套仓库的 essential-0.bundle / essential-1.bundle 及最终 repo-0.bundle / repo-1.bundle 均已 verify、独立 clone、fsck；19 个工作树的 HEAD 均可恢复。source-and-evidence.zip 的 355,093 个文件通过 CRC 校验；补充旧实验目录 legacy-experiments.zip 的 2,753 个文件也通过 CRC。18 个未提交文件已取出恢复，与初始副本和原文件逐字节相同；旧仓库 HEAD/status 未变。以 recovery-summary.json、audit.json、essential-recovery.json 为恢复清单；前期中间输出不作为完整备份。排除可重装 node_modules 和 reparse targets，原始文件保留。
+
+没有删除/reset/清理旧文件；旧 2 个 ready 任务不再派发，15 retained / 3 released 历史资源不改写。旧资源的进程状态仍 unverifiable；现场除本次开发终端外未发现旧 Kernel Agent，不能由此认定所有历史进程已退出。其他产品不受本轮控制。
 
 源码来源：src/duration-policy.ts 只改编旧仓库上述 SHA 的 src/main/runtime/orchestration/kernel-run-limits.ts 中 parseKernelLimits 的有限正整数和未知字段拒绝规则；tests/duration-policy.test.mjs 改编同目录 kernel-run-limits.test.ts 的无效数值和对象反例。保留原 MIT / Copyright (c) 2026 Lovecast Inc. 于 LICENSE。未复制协调器、数据库、Electron、规则图或旧测试框架。
 
@@ -34,6 +36,8 @@ node dist/cli.js start --agent codex --cwd C:\Users\DW\agent-kernel-cli-practice
 ## 验证与真实结果
 
 `pnpm build`、`pnpm test`：**33/33 通过**。覆盖成功/失败/超时、重复停止、三代进程回收、旁观进程存活、监督者退出、中文/引号参数、过期/错误主机拒绝。初版的 PowerShell UTF-8 解码和控制输入阻塞问题已修复。
+
+另在剔除 Orca PATH 和会话环境变量的独立子进程中完成普通任务，succeeded / exited；回执在 `.agent-kernel-cli/acceptance/independent-runtime.json`。没有为这项核对关闭稳定 Orca。
 
 2026-09-12 02:54:34—02:57:24（北京时间）执行了**唯一一次真实 Codex 调用**。练习仓库 `C:/Users/DW/agent-kernel-cli-practice`，main / `065d4be`。任务 `992427fc-939d-438a-a720-79da76ab03f3` 的实际最终消息：
 
