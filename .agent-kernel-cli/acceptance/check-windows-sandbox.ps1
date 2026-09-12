@@ -116,6 +116,18 @@ function Protect-CheckText([string]$Text) {
     }) -join "`n"
 }
 
+function Get-SandboxCheckFailureSummary([System.Collections.IDictionary]$Record, [string]$StandardError) {
+    if ($Record.status -notin @('FAILED', 'CHECK_ERROR', 'TIMEOUT')) { return }
+    $details = @()
+    if ($Record.error) { $details += Protect-CheckText $Record.error }
+    if (-not $Record.stderrCaptureComplete) { $details += 'stderr was not captured completely; inspect the result record.' }
+    elseif ([string]::IsNullOrWhiteSpace($StandardError)) { $details += 'stderr was captured but empty.' }
+    else { $details += Protect-CheckText $StandardError }
+    ($details -join "`n") -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 8 | ForEach-Object {
+        if ($_.Length -gt 400) { $_.Substring(0, 400) + ' [truncated]' } else { $_ }
+    }
+}
+
 $recordDirectory = Join-Path $PSScriptRoot ('sandbox-check-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))
 New-Item -ItemType Directory -Path $recordDirectory -ErrorAction Stop | Out-Null
 $hadHome = Test-Path Env:CODEX_HOME
@@ -127,13 +139,13 @@ $config = Join-Path $testHome 'config.toml'
 $configBefore = (Get-FileHash -LiteralPath $config).Hash
 $logOffsets = @{}
 Get-ChildItem -LiteralPath $logDirectory -Filter 'sandbox*.log' -File -ErrorAction SilentlyContinue | ForEach-Object { $logOffsets[$_.FullName] = $_.Length }
-$arguments = @($entry, 'sandbox', '-c', 'sandbox_mode="read-only"', '-c', 'windows.sandbox="elevated"', '-C', $practice,
+$arguments = @($entry, 'sandbox', '--permission-profile', ':read-only', '-c', 'windows.sandbox="elevated"', '-C', $practice,
     '--', $shell, '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', "Write-Output 'sandbox-ready'")
 $record = [ordered]@{
     startedAt = [DateTime]::UtcNow.ToString('o'); status = 'NOT_STARTED'; context = $context
     preflightReceipt = $preflightPath; mode = $decision.mode; strictIndependenceProven = $false
     executable = $node; arguments = $arguments; cwd = $practice; codexHome = $testHome
-    binarySha256 = $expectedBinaryHash; expectedConfiguration = @{ sandbox_mode = 'read-only'; 'windows.sandbox' = 'elevated' }
+    binarySha256 = $expectedBinaryHash; expectedConfiguration = @{ permissionProfile = ':read-only'; 'windows.sandbox' = 'elevated' }
     timeoutSeconds = $timeoutSeconds; exitCode = $null; timedOut = $false; error = $null
     modelTasksSubmitted = 0; existingModelBudgetModified = $false
     logCorrelation = 'New bytes in the check time window; concurrent sessions may also write these logs. Review attribution before acceptance.'
@@ -244,4 +256,10 @@ try {
     if ($null -ne $process) { $process.Dispose() }
     Write-Host "Recorded check: $recordDirectory"
     Write-Host "Status: $($record.status); exit: $($record.exitCode); timed out: $($record.timedOut). No model was called."
+    $failureSummary = @(Get-SandboxCheckFailureSummary $record $stderr)
+    if ($failureSummary.Count) {
+        Write-Host 'Failure details (sanitized; up to 8 lines):'
+        $failureSummary | ForEach-Object { Write-Host $_ }
+        Write-Host "Full captured output and result: $recordDirectory"
+    }
 }

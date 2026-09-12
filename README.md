@@ -74,13 +74,19 @@ node dist/cli.js result 992427fc-939d-438a-a720-79da76ab03f3 --store .agent-kern
 
 专用 `check-windows-sandbox.tests.ps1` 通过 **19 项确定性测试**，只加载判断函数与执行前的阻断条件，覆盖未知 Job、开发祖先、查询失败、管理员及子进程继承；不启动 Codex。脚本和专用测试纳入 Git；旧脚本副本 `check-windows-sandbox.before-ordinary-terminal.ps1`、原失败回执和历史诊断保留本地，新结果为 `20260912-ordinary-terminal-script-fix.json`。本轮未重跑产品构建或原 33 项测试，未执行实际沙箱命令、系统变更或模型调用；模型额度仍为 **0/2**。
 
-在**已经手动打开的普通 PowerShell** 中执行下面一条命令即可，无需反复开新窗口；不要从 Orca/Codex 终端执行，也不要选择管理员运行：
+随后用户手动运行普通终端检查，原记录保留在 `sandbox-check-20260912T015158737Z/`。`stderr.log` 的实际错误为 `error: the following required arguments were not provided: --permission-profile <NAME>`；stdout 和沙箱日志增量均为空。`result.json` 记录 Node 入口 PID 61264、exit 2、未超时、完整捕获输出、脚本异常为空。官方 npm 入口将参数逐项传给原生 Codex，并转交其退出码；此次失败定位于 Codex 参数解析，不能据此判断旧 1223、账户权限或沙箱初始化。外层 Job 仍为 unknown，严格独立性仍未证明。
+
+已按同一固定二进制的 `help sandbox` 修正内部参数：显式传入 `--permission-profile :read-only`，保留 `windows.sandbox="elevated"`，移除旧 `sandbox_mode` 覆盖；[官方权限文档](https://learn.chatgpt.com/docs/permissions)将 `:read-only` 定义为内置只读配置，无需新增用户配置。原 PowerShell 调用命令的语法有效，缺项位于脚本生成的 Codex 参数。失败时现在显示最多 8 行脱敏错误摘要及记录目录，并区分 stderr 为空和未完整捕获。
+
+本次 `pwsh -NoProfile -File .agent-kernel-cli/acceptance/check-windows-sandbox.tests.ps1` **26/26 通过**：保留原 19 项准入检查，增加真实 Node 测试进程的逐项参数/工作目录传递（空格、中文、引号、末尾路径分隔符），以及摘要脱敏、长度限制和捕获状态检查。仅执行帮助读取和本地确定性测试，未启动实际沙箱命令、模型任务或 doctor，未改系统、持久配置和产品 Job/停止代码；未重跑产品构建和 33 项产品测试。参数传递检查不等于沙箱实际通过，旧 1223 的原因仍未确定。
+
+在**已经手动打开的普通 PowerShell** 中执行修正后的脚本，无需反复开新窗口；不要从 Orca/Codex 终端执行，也不要选择管理员运行：
 
 ```powershell
 & 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File 'C:\Users\DW\agent-kernel-cli\.agent-kernel-cli\acceptance\check-windows-sandbox.ps1' -OrdinaryTerminalDiagnostic
 ```
 
-脚本保存并恢复临时 CODEX_HOME 和工作目录，固定已核对的 Codex 二进制，先进入练习目录，再指定 `sandbox_mode=read-only`、`windows.sandbox=elevated`，只执行 `Write-Output 'sandbox-ready'`。不读写练习文件、不调用模型、不改持久化配置，不使用 ExecutionPolicy Bypass、自动提权或隐藏窗口。输出、真实退出码和本次时间窗口的沙箱日志增量保存到 `sandbox-check-<时间>/`；并发日志需核对归属。120 秒不返回就记录超时，只请求终止本次创建进程的树；脱离进程树的助手状态记为无法核实，不按进程名批量结束。脚本不会把输出标记自动升级为验收通过，仍须核对实际配置、日志及所有通过条件；普通终端兼容性检查成功也不能冒称严格独立环境验收通过。
+脚本保存并恢复临时 CODEX_HOME 和工作目录，固定已核对的 Codex 二进制，先进入练习目录，再指定 `--permission-profile :read-only`、`windows.sandbox=elevated`，只执行 `Write-Output 'sandbox-ready'`。不读写练习文件、不调用模型、不改持久化配置，不使用 ExecutionPolicy Bypass、自动提权或隐藏窗口。输出、真实退出码和本次时间窗口的沙箱日志增量保存到 `sandbox-check-<时间>/`；并发日志需核对归属。120 秒不返回就记录超时，只请求终止本次创建进程的树；脱离进程树的助手状态记为无法核实，不按进程名批量结束。脚本不会把输出标记自动升级为验收通过，仍须核对实际配置、日志及所有通过条件；普通终端兼容性检查成功也不能冒称严格独立环境验收通过。
 
 官方 elevated 初始化可能创建/修复专用本地账户、文件 ACL、防火墙规则和登录权限，见 [官方 Windows 沙箱说明](https://learn.chatgpt.com/docs/windows/windows-sandbox)。这些是系统状态，且本机与 Orca 管理目录共用沙箱账户，不能承诺对日常沙箱零影响；不需要长期以管理员运行 Kernel，不重装/升级 Codex，不手工改全盘 ACL。检查应输出 `sandbox-ready`、退出码 0，沙箱日志无 setup-required/助手错误且保持 elevated；这仅证明无模型检查通过。若需改稳定 Orca 或仍失败，保留阻塞，不继续折腾 Windows。
 

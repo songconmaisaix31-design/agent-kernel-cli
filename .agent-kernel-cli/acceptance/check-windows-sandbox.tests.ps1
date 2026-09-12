@@ -91,6 +91,91 @@ foreach ($case in @(
     $results.Add([ordered]@{ name = $case.name; passed = $true })
 }
 
+foreach ($functionName in @('Protect-CheckText', 'Get-SandboxCheckFailureSummary')) {
+    $definition = $ast.Find({ param($candidate) $candidate -is [Management.Automation.Language.FunctionDefinitionAst] -and $candidate.Name -eq $functionName }, $false)
+    if ($null -eq $definition) { throw "Missing function: $functionName" }
+    . ([scriptblock]::Create($definition.Extent.Text))
+}
+$argumentAst = $ast.Find({ param($candidate) $candidate -is [Management.Automation.Language.AssignmentStatementAst] -and $candidate.Left.Extent.Text -eq '$arguments' }, $false)
+$startInfoStart = $source.IndexOf('    $startInfo = [Diagnostics.ProcessStartInfo]::new()', [StringComparison]::Ordinal)
+$startInfoEnd = $source.IndexOf('    $process = [Diagnostics.Process]::new()', [StringComparison]::Ordinal)
+if ($null -eq $argumentAst -or $startInfoStart -lt 0 -or $startInfoEnd -le $startInfoStart) { throw 'Launch argument block missing.' }
+$argumentBlock = [scriptblock]::Create($argumentAst.Extent.Text)
+$startInfoBlock = [scriptblock]::Create($source.Substring($startInfoStart, $startInfoEnd - $startInfoStart))
+
+# A local Node fixture receives the runner's argv; Codex and the sandbox never start.
+$fixtureRoot = Join-Path $PSScriptRoot ('argv-fixture-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
+$entry = Join-Path $fixtureRoot "entry space 中文's.cjs"
+$practiceDirectory = Join-Path $fixtureRoot "practice space 中文's"
+New-Item -ItemType Directory -Path $practiceDirectory | Out-Null
+$node = (Get-Command node -CommandType Application | Select-Object -First 1).Source
+$shell = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+try {
+    'process.stdout.write(JSON.stringify({argv:process.argv.slice(2),cwd:process.cwd()}));' | Set-Content -LiteralPath $entry -Encoding utf8
+    foreach ($trailingSeparator in @($false, $true)) {
+        $practice = if ($trailingSeparator) { $practiceDirectory + [IO.Path]::DirectorySeparatorChar } else { $practiceDirectory }
+        . $argumentBlock
+        . $startInfoBlock
+        Assert-Equal $startInfo.FileName $node 'Node executable'
+        Assert-Equal $startInfo.WorkingDirectory $practice 'working directory argument'
+        Assert-Equal $startInfo.UseShellExecute $false 'no shell string parsing'
+        $startInfo.CreateNoWindow = $true
+        $probe = [Diagnostics.Process]::new()
+        $probe.StartInfo = $startInfo
+        try {
+            if (-not $probe.Start()) { throw 'Argv fixture did not start.' }
+            $outputTask = $probe.StandardOutput.ReadToEndAsync()
+            $errorTask = $probe.StandardError.ReadToEndAsync()
+            if (-not $probe.WaitForExit(10000)) { throw 'Argv fixture timed out.' }
+            Assert-Equal $probe.ExitCode 0 'Argv fixture exit'
+            if (-not $outputTask.Wait(2000) -or -not $errorTask.Wait(2000)) { throw 'Argv fixture capture incomplete.' }
+            Assert-Equal $errorTask.Result '' 'Argv fixture stderr'
+            $received = $outputTask.Result | ConvertFrom-Json
+            $expected = @('sandbox', '--permission-profile', ':read-only', '-c', 'windows.sandbox="elevated"', '-C', $practice,
+                '--', $shell, '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', "Write-Output 'sandbox-ready'")
+            Assert-Equal ($received.argv | ConvertTo-Json -Compress) ($expected | ConvertTo-Json -Compress) 'received argv'
+            Assert-Equal $received.cwd $practiceDirectory 'received cwd'
+            $results.Add([ordered]@{ name = "real argv transport, trailing separator=$trailingSeparator"; passed = $true })
+        } finally {
+            if ($probe.Id -and -not $probe.HasExited) { $probe.Kill($true); [void]$probe.WaitForExit(5000) }
+            $probe.Dispose()
+        }
+    }
+} finally {
+    if (Test-Path -LiteralPath $entry) { Remove-Item -LiteralPath $entry }
+    Remove-Item -LiteralPath $practiceDirectory
+    Remove-Item -LiteralPath $fixtureRoot
+}
+
+$missingProfile = "error: the following required arguments were not provided:`n  --permission-profile <NAME>"
+$summaryRecord = @{ status = 'FAILED'; stderrCaptureComplete = $true; error = $null }
+$summary = @(Get-SandboxCheckFailureSummary $summaryRecord $missingProfile)
+Assert-Equal ($summary -join "`n") $missingProfile 'original parser error visible'
+$results.Add([ordered]@{ name = 'failure summary preserves parser error'; passed = $true })
+
+$summary = @(Get-SandboxCheckFailureSummary $summaryRecord "error: invalid option`nAuthorization: Bearer fixture-secret`napi_key=fixture-secret`npassword=fixture-secret`nsandbox-secrets hidden`n--permission-profile <NAME>")
+Assert-Equal ($summary -match 'fixture-secret|sandbox-secrets').Count 0 'sensitive lines omitted'
+Assert-Equal ($summary -match '^\[sensitive diagnostic line omitted\]$').Count 4 'redaction count'
+$results.Add([ordered]@{ name = 'failure summary redacts sensitive lines'; passed = $true })
+
+$summary = @(Get-SandboxCheckFailureSummary $summaryRecord ((1..12 | ForEach-Object { 'x' * 600 }) -join "`n"))
+Assert-Equal $summary.Count 8 'summary line limit'
+Assert-Equal ($summary | Where-Object { $_.Length -gt 412 }).Count 0 'summary line length'
+$results.Add([ordered]@{ name = 'failure summary bounded'; passed = $true })
+
+Assert-Equal (@(Get-SandboxCheckFailureSummary $summaryRecord '') -join '') 'stderr was captured but empty.' 'empty stderr'
+$summaryRecord.stderrCaptureComplete = $false
+Assert-Equal (@(Get-SandboxCheckFailureSummary $summaryRecord 'partial output') -join '') 'stderr was not captured completely; inspect the result record.' 'uncaptured stderr'
+$summaryRecord.status = 'CHECK_ERROR'
+$summaryRecord.error = 'launch failed'
+Assert-Equal (@(Get-SandboxCheckFailureSummary $summaryRecord '')[0]) 'launch failed' 'script exception visible'
+$results.Add([ordered]@{ name = 'empty and uncaptured stderr remain distinct from script errors'; passed = $true })
+
+$summaryRecord.status = 'EXITED_REVIEW_REQUIRED'
+Assert-Equal (@(Get-SandboxCheckFailureSummary $summaryRecord $missingProfile)).Count 0 'no failure summary on review-required exit'
+$results.Add([ordered]@{ name = 'review-required exit has no failure summary'; passed = $true })
+
 [ordered]@{
     fixtureOnly = $true; testsPassed = $results.Count; tests = $results
     actualSandboxCommandsStarted = 0; modelTasksSubmitted = 0
