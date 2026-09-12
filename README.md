@@ -68,9 +68,9 @@ node dist/cli.js result 992427fc-939d-438a-a720-79da76ab03f3 --store .agent-kern
 
 两份配置均选择 `gpt-6-astra` / `xhigh` / Windows `elevated`，但文件不完全相同；日常可用不能证明只读沙箱可用。旧 `.codex/.sandbox/sandbox.2026-09-11.log` 记录 02:55:02 刷新完成、errors=[]，随后 02:55:03 报 `sandbox users missing or incompatible with marker version`，之后出现助手启动错误 1223。当前两个专用账户均存在且启用，两处标记均为 version 5，且共用账户。因此只能定位到官方沙箱准备/兼容检查阶段；**不能由 1223 断定用户取消，亦不能排除新 CLI 的 Job/非交互启动条件参与失败**。官方 `doctor --json` 45 秒超时，未得到诊断报告，没有重试。
 
-继续核对 `1ef410eafb0283def99f3261e9d81589bfefd19b` 时，工具内 PowerShell 的 Windows API 查询成功，但 `IsProcessInJob=true`、管理员身份为 false；不能作为独立终端对照。**无模型沙箱检查待人工执行，直接 Codex/新 CLI 真实验收均未执行，模型额度仍为 0/2。** 未尝试窗口启动或进程逃逸来绕过父 Job。
+继续核对实际 HEAD `5fe27dd757eb2660e0c6b09e33e98cb2f08c495d` 时，工作区干净，已有未同步文档提交保留。工具内 PowerShell 的 Windows API 查询成功，但 `IsProcessInJob=true`、管理员身份为 false；不能作为独立终端对照。用户随后授权自主配置必要沙箱，本次通过现有桌面工具尝试打开独立入口：项目文件管理器已打开，但它仍属于 Job；`Win+R` 被工具拒绝为不支持的修饰键，改用支持的 `Ctrl+Escape` 后仍无法确认可操作的开始菜单窗口。未从受 Job 约束的窗口启动检查，未修改 Orca 或绕过进程控制。**无模型沙箱检查待人工执行，直接 Codex/新 CLI 真实验收均未执行，模型额度仍为 0/2。** 这是独立执行入口受限，不能据此认定沙箱或 CLI 的根因。
 
-可审查脚本在 `.agent-kernel-cli/acceptance/check-windows-sandbox.ps1`；本轮仅通过 PowerShell 语法解析与 `-PreflightOnly` 环境检查，未执行其沙箱分支。预检回执为 `20260912-independent-preflight.json`，本轮交接记录为 `20260912-sandbox-check-handoff.json`，均在同一验收目录。帮助只确认候选选项可解析，不等于实际沙箱配置已生效；没有重复帮助探测或 doctor 调用。
+可审查脚本在 `.agent-kernel-cli/acceptance/check-windows-sandbox.ps1`；此前通过语法解析，本次复核 `-PreflightOnly` 仍不满足独立条件，未执行其沙箱分支，也未重跑构建或 33 项测试。原预检、交接回执保留；本次桌面操作与阻塞单独记录于 `20260912-desktop-sandbox-followup.json`，均在同一验收目录。帮助只确认候选选项可解析，不等于实际沙箱配置已生效；没有重复 Codex 帮助探测或 doctor 调用。本次只更新 README/TODO 和本地记录，没有产品代码或系统配置变更。
 
 需要用户完成的一个动作：从 **Windows 的 Win+R** 运行以下命令，启动普通 PowerShell；不要从 Orca/Codex 终端启动，也不要选择管理员运行。新窗口本身不是独立证据，脚本仍会核对 Job、权限和父进程；无法确认便拒绝开始检查。
 
