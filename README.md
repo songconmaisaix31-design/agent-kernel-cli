@@ -35,7 +35,7 @@ node dist/cli.js start --agent codex --cwd C:\Users\DW\agent-kernel-cli-practice
 
 ## 验证与真实结果
 
-`pnpm build`、`pnpm test`：**33/33 通过**。覆盖成功/失败/超时、重复停止、三代进程回收、旁观进程存活、监督者退出、中文/引号参数、过期/错误主机拒绝。初版的 PowerShell UTF-8 解码和控制输入阻塞问题已修复。
+`pnpm build`、`pnpm test`：最新 **37/37 通过**。覆盖成功/失败/超时、重复停止、三代进程回收、旁观进程存活、监督者退出、中文/引号参数、过期/错误主机拒绝，以及 Windows 原子状态更新的短暂重命名失败。初版的 PowerShell UTF-8 解码和控制输入阻塞问题已修复。
 
 另在剔除 Orca PATH 和会话环境变量的独立子进程中完成普通任务，succeeded / exited；回执在 `.agent-kernel-cli/acceptance/independent-runtime.json`。没有为这项核对关闭稳定 Orca。
 
@@ -55,6 +55,24 @@ node dist/cli.js result 992427fc-939d-438a-a720-79da76ab03f3 --store .agent-kern
 简明回执 `.agent-kernel-cli/acceptance/real-call.json`；完整日志在 `.agent-kernel-cli/real/runs/<任务 ID>/`，留本地不入 Git。练习文件前后 SHA-256 相同，Git 干净。未购买额度。
 
 ## 只读诊断续验（2026-09-12）
+
+**当前结论：普通终端无模型沙箱检查通过；直接 Codex 和新 CLI 真实验收均未执行，原两次授权累计仍为 0/2。** 原始 `sandbox-check-20260912T022746843Z/` 保持 `EXITED_REVIEW_REQUIRED`，另存审查记录 `sandbox-review-20260912T022746843Z.json`。已审查通过的无模型检查无需重跑。
+
+本次记录包含预定 PowerShell 命令的 START、stdout `sandbox-ready`、实际 Node/Codex 入口 exit 0、完整捕获且为空的 stderr，以及同一次初始化后的 `setup provisioning binary completed`、`processed 0 write roots ... errors=[]`、只读 ACL 完成和命令运行器启动。初始化确实执行并完成，不能把前面的 setup-required 行当作最终失败；未见本次权限降级。保留末尾 `hide users ... C:\Users\Default ... SetFileAttributesW ... 5` 的目录属性警告，不将它改写为 ACL 或命令执行失败。外层 Job 归属仍 unknown，严格独立性未证明，脱离进程树的助手退出仍不可核实；不推导历史 1223 的根因或全面沙箱安全性。
+
+当前测试目录 `C:\Users\DW\.codex` 仍是旧 ChatGPT 账号，与当前 Orca 账号不同。官方 `account/read`、`account/rateLimits/read` 在未创建线程或提交模型任务的情况下确认：`ordinaryUsageAllowed=false`、Codex 周额度使用率 100%。账号检查保存在本地 `account-preflight-20260912T023812446Z.json`，未包含凭据。没有复制凭据、购买额度或使用额度重置；需要本人在测试目录登录可用账号，再复查授权与余额后继续 A→B。`login status` 本身只显示已有 ChatGPT 登录，不能单独证明还有额度。
+
+本人登录入口（仅在子 PowerShell 中设置测试 CODEX_HOME，按提示使用有额度的 ChatGPT 账号）：
+
+```powershell
+& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -Command { $env:CODEX_HOME='C:\Users\DW\.codex'; & 'C:\Program Files\nodejs\node.exe' 'C:\Users\DW\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js' login --device-auth }
+```
+
+本机 `help exec` 已确认 `exec --sandbox read-only`，现有产品使用 `--ask-for-approval never exec --sandbox read-only --json --ephemeral --color never -`；不得照搬 `sandbox --permission-profile`。A/B 均须明确传入测试 CODEX_HOME、同一执行器和练习目录，并核对 B 的子进程记录与实际环境。随机答案不进入提示，A 失败不执行 B，账号切换不重置原两次授权。
+
+本轮首次产品测试为 31/33：两处 `supervisor.log` 均记录状态文件原子重命名 `EPERM` 导致监督进程退出，原目录 `tests/run-EhRf7S/`、`tests/run-MBujnv/` 和占用保留。已窄修 Windows `EPERM/EACCES/EBUSY` 重命名最多额外尝试 5 次，每次等待 50ms；持续错误原样抛出，原文件不删除，POSIX 和其他错误不重试，不改 Job/停止机制。确定性反例修复前 2/4、修复后 4/4；最终构建和全部 37 项测试通过，输出另存 `product-tests-after-state-rename.log`。这些均不包含真实模型任务。
+
+以下为保留的历史诊断和执行边界：
 
 从 `1f29f957723f5515049fecd5087dc3f784cae438` 继续；相对指定的 `7443c1b` 仅有 README/TODO 更新。**本轮新增真实模型任务 0/2；直接 Codex 与新 CLI 均未开始真实验收。** 原失败回执不改写，新诊断单独记录于 `.agent-kernel-cli/acceptance/20260912-sandbox-diagnosis.json`。
 
@@ -80,7 +98,7 @@ node dist/cli.js result 992427fc-939d-438a-a720-79da76ab03f3 --store .agent-kern
 
 本次 `pwsh -NoProfile -File .agent-kernel-cli/acceptance/check-windows-sandbox.tests.ps1` **26/26 通过**：保留原 19 项准入检查，增加真实 Node 测试进程的逐项参数/工作目录传递（空格、中文、引号、末尾路径分隔符），以及摘要脱敏、长度限制和捕获状态检查。仅执行帮助读取和本地确定性测试，未启动实际沙箱命令、模型任务或 doctor，未改系统、持久配置和产品 Job/停止代码；未重跑产品构建和 33 项产品测试。参数传递检查不等于沙箱实际通过，旧 1223 的原因仍未确定。
 
-在**已经手动打开的普通 PowerShell** 中执行修正后的脚本，无需反复开新窗口；不要从 Orca/Codex 终端执行，也不要选择管理员运行：
+以下是已经完成并审查通过的无模型检查命令，保留供追溯，本轮不要重跑：
 
 ```powershell
 & 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File 'C:\Users\DW\agent-kernel-cli\.agent-kernel-cli\acceptance\check-windows-sandbox.ps1' -OrdinaryTerminalDiagnostic
@@ -92,11 +110,11 @@ node dist/cli.js result 992427fc-939d-438a-a720-79da76ab03f3 --store .agent-kern
 
 如果需要初始化，官方程序为同一 npm 包的 `vendor/x86_64-pc-windows-msvc/codex-resources/codex-windows-sandbox-setup.exe`；脚本会在运行前显示完整路径。只由用户本人决定是否批准 UAC，拒绝降级或完全访问选项。
 
-前置检查通过后，沿用同一执行器、配置目录、权限与练习目录：先写入不传给提示/stdin/历史的随机文字，直接 Codex 只读验收；成功后轮换文字再经新 CLI 验收。每次均核对实际读取事件、正确输出、退出结果、文件前后内容；直接失败则停止，本轮最多两次真实任务且不自动重试。两种真实验收分别记结果，不能互相替代。
+无模型前置检查已经通过；账号具备可用额度后，沿用同一执行器、配置目录、权限与练习目录：先写入不传给提示/stdin/历史的随机文字，直接 Codex 只读验收；成功后轮换文字再经新 CLI 验收。每次均核对实际读取事件、正确输出、退出结果、文件前后内容；直接失败则停止，原授权累计最多两次真实任务且不自动重试。两种真实验收分别记结果，不能互相替代。
 
 ## 限制与后续
 
-- 需人工完成上述官方沙箱检查/必要初始化，本轮未执行系统变更。首轮 Codex 自身写入过用户目录沙箱缓存/日志；当时一次旧式 sandbox 帮助探测被解析为执行参数，已停止该诊断进程，无第二次模型调用。
+- 官方沙箱检查与该次必要初始化已由用户手动执行并审查通过。当前人工动作是测试 CODEX_HOME 登录可用账号；本轮 Agent 未执行系统变更。首轮失败、旧帮助探测和本次目录属性警告仍保留。
 - 执行后端仅 Windows。Linux/macOS 的 start 明确拒绝；SSH/UNC/WSL 远程路径不接管。只读检查发现现有 WSL2 Ubuntu、Docker Desktop，以及停止的 OrcaKernelLab-v014188/kali-linux；约 32 GB RAM，HypervisorPresent=true。未安装虚拟化软件或启动停止中的系统。
 - 后续 Linux VM 需要已批准的 VM/发行版、Node 24+、Git、已有账号 Codex 和可用只读沙箱；先实现、验收进程组归属、停止/超时/断联/重启，再执行真实只读任务。WSL 环境检查不是 VM 验收。
 - Windows 停止是对本次 Job 内进程的强制终止，依据 [系统 Job Object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)。程序模式限受信任测试程序，Job 不是文件/网络沙箱，也不能证明外部服务/WMI/远程工作已停止。

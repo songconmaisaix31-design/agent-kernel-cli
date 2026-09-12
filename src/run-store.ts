@@ -11,7 +11,16 @@ export function runPath(store: string, id: string): string {
 export function writeJson(file: string, value: unknown): void {
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporary, file);
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  for (let retries = 0; ; retries++) {
+    try { renameSync(temporary, file); return; }
+    catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (process.platform !== 'win32' || retries === 5 || !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '')) throw error;
+      // Windows readers can briefly block replacement; never delete the old record.
+      Atomics.wait(pause, 0, 0, 50);
+    }
+  }
 }
 export function readState(store: string, id: string): RunState {
   const file = join(runPath(store, id), 'state.json');
