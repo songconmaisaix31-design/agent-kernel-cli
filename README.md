@@ -54,9 +54,35 @@ node dist/cli.js result 992427fc-939d-438a-a720-79da76ab03f3 --store .agent-kern
 
 简明回执 `.agent-kernel-cli/acceptance/real-call.json`；完整日志在 `.agent-kernel-cli/real/runs/<任务 ID>/`，留本地不入 Git。练习文件前后 SHA-256 相同，Git 干净。未购买额度。
 
+## 只读诊断续验（2026-09-12）
+
+从 `1f29f957723f5515049fecd5087dc3f784cae438` 继续；相对指定的 `7443c1b` 仅有 README/TODO 更新。**本轮新增真实模型任务 0/2；直接 Codex 与新 CLI 均未开始真实验收。** 原失败回执不改写，新诊断单独记录于 `.agent-kernel-cli/acceptance/20260912-sandbox-diagnosis.json`。
+
+| 核对项 | 日常 Codex 会话 | 新 CLI 的 Codex 调用 |
+| --- | --- | --- |
+| 执行器 | npm `@openai/codex`，0.154.0 | 同一 npm 包及原生 `codex.exe`，由 Node 入口启动 |
+| 配置目录 | `C:/Users/DW/AppData/Roaming/orca/codex-runtime-home/home` | 子进程未设置 CODEX_HOME，读取 `C:/Users/DW/.codex/config.toml` |
+| 权限 | 当前会话记录为 `danger-full-access`，启动参数含 `--yolo` | `--ask-for-approval never exec --sandbox read-only --json --ephemeral --color never -` |
+| 工作目录 | 旧 Orca Kernel 仓库 | `C:/Users/DW/agent-kernel-cli-practice`，没有项目级 Codex 配置 |
+| 进程启动 | Orca 终端中的交互会话 | 普通用户、非管理员，Windows Job 内启动，无 breakaway |
+
+两份配置均选择 `gpt-6-astra` / `xhigh` / Windows `elevated`，但文件不完全相同；日常可用不能证明只读沙箱可用。旧 `.codex/.sandbox/sandbox.2026-09-11.log` 记录 02:55:02 刷新完成、errors=[]，随后 02:55:03 报 `sandbox users missing or incompatible with marker version`，之后出现助手启动错误 1223。当前两个专用账户均存在且启用，两处标记均为 version 5，且共用账户。因此只能定位到官方沙箱准备/兼容检查阶段；**不能由 1223 断定用户取消，亦不能排除新 CLI 的 Job/非交互启动条件参与失败**。官方 `doctor --json` 45 秒超时，未得到诊断报告，没有重试。
+
+当前停止 Windows 自动排障。需要用户做的一个动作：在独立的普通 PowerShell 中运行下列官方沙箱检查；如出现初始化/UAC 提示，由用户决定是否批准，拒绝任何降级为完全访问或较弱沙箱的提议。参数已用本机 `sandbox --help` 核对；**下列实际检查尚未执行，不调用模型**。
+
+```powershell
+$env:CODEX_HOME = 'C:\Users\DW\.codex' # 仅当前独立终端
+node 'C:\Users\DW\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js' sandbox -c 'sandbox_mode="read-only"' -c 'windows.sandbox="elevated"' -C 'C:\Users\DW\agent-kernel-cli-practice' -- 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoLogo -NoProfile -NonInteractive -Command "Write-Output 'sandbox-ready'"
+$LASTEXITCODE
+```
+
+官方 elevated 初始化可能创建/修复专用本地账户、文件 ACL、防火墙规则和登录权限，见 [官方 Windows 沙箱说明](https://learn.chatgpt.com/docs/windows/windows-sandbox)。这些是系统状态，且本机与 Orca 管理目录共用沙箱账户，不能承诺对日常沙箱零影响；不需要长期以管理员运行 Kernel，不重装/升级 Codex，不手工改全盘 ACL。检查应输出 `sandbox-ready`、退出码 0，沙箱日志无 setup-required/助手错误且保持 elevated；这仅证明无模型检查通过。若需改稳定 Orca 或仍失败，保留阻塞，不继续折腾 Windows。
+
+前置检查通过后，沿用同一执行器、配置目录、权限与练习目录：先写入不传给提示/stdin/历史的随机文字，直接 Codex 只读验收；成功后轮换文字再经新 CLI 验收。每次均核对实际读取事件、正确输出、退出结果、文件前后内容；直接失败则停止，本轮最多两次真实任务且不自动重试。两种真实验收分别记结果，不能互相替代。
+
 ## 限制与后续
 
-- 需要人工决定并完成 **Codex Windows elevated 沙箱初始化**，可能涉及系统设置，本轮不执行、不降级沙箱。Codex 自身写入用户目录沙箱缓存/日志；未批准初始化。一次旧式 sandbox 帮助探测被当前 CLI 解析为执行参数，已停止该诊断进程，无第二次模型调用。
+- 需人工完成上述官方沙箱检查/必要初始化，本轮未执行系统变更。首轮 Codex 自身写入过用户目录沙箱缓存/日志；当时一次旧式 sandbox 帮助探测被解析为执行参数，已停止该诊断进程，无第二次模型调用。
 - 执行后端仅 Windows。Linux/macOS 的 start 明确拒绝；SSH/UNC/WSL 远程路径不接管。只读检查发现现有 WSL2 Ubuntu、Docker Desktop，以及停止的 OrcaKernelLab-v014188/kali-linux；约 32 GB RAM，HypervisorPresent=true。未安装虚拟化软件或启动停止中的系统。
 - 后续 Linux VM 需要已批准的 VM/发行版、Node 24+、Git、已有账号 Codex 和可用只读沙箱；先实现、验收进程组归属、停止/超时/断联/重启，再执行真实只读任务。WSL 环境检查不是 VM 验收。
 - Windows 停止是对本次 Job 内进程的强制终止，依据 [系统 Job Object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)。程序模式限受信任测试程序，Job 不是文件/网络沙箱，也不能证明外部服务/WMI/远程工作已停止。
