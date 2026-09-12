@@ -1,6 +1,6 @@
 # agent-kernel-cli
 
-本地单任务 CLI 原型；用稳定 Orca/Codex 开发，运行时不依赖 Orca。不承担真实产品开发。本轮不建远端、不发布。只维护本说明和 TODO.md。
+本地单任务 CLI 原型；用稳定 Orca/Codex 开发，运行时不依赖 Orca。不承担真实产品开发。按用户后续授权建立 [GitHub 私有仓库](https://github.com/songconmaisaix31-design/agent-kernel-cli)，用于源码同步，不发布 Release。只维护本说明和 TODO.md。
 
 旧成果：主仓库 C:/Users/DW/AppData/Local/OrcaKernelLab/code/orca-kernel，分支 kernel/v01-managed-dispatch，HEAD 01bd406abb787a6b2fd8064e66bcefb75971b8ff（Orca 1.4.188）；早期规则仓库 C:/Users/DW/orca/Multi-agent-kernel，HEAD 68e84c6f22b50676ab8a964af0a7b8dbb1223fd5。稳定开发 Orca 实测 1.4.199，保持运行。
 
@@ -61,4 +61,4 @@ node dist/cli.js result 992427fc-939d-438a-a720-79da76ab03f3 --store .agent-kern
 - 后续 Linux VM 需要已批准的 VM/发行版、Node 24+、Git、已有账号 Codex 和可用只读沙箱；先实现、验收进程组归属、停止/超时/断联/重启，再执行真实只读任务。WSL 环境检查不是 VM 验收。
 - Windows 停止是对本次 Job 内进程的强制终止，依据 [系统 Job Object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)。程序模式限受信任测试程序，Job 不是文件/网络沙箱，也不能证明外部服务/WMI/远程工作已停止。
 - 监督者失联显示 unverifiable，保留占用，不依据磁盘 PID 杀进程或自动解锁。安全恢复、多用户对抗性隔离、断电耐久性未实现/验收。运行记录含任务正文和输出，调用方应限制敏感输入。
-- 本轮仅本地提交，远端为空，未 push 或发布。恢复旧成果时先把 bundle 克隆到新目录，再按清单恢复工作树和文件；不要用旧 .git 指针覆盖新仓库，也不恢复旧 Run 派发权限。
+- 源码通过 `origin/main` 同步至上述私有仓库；运行记录、练习仓库和旧成果备份保留本地。恢复旧成果时先把 bundle 克隆到新目录，再按清单恢复工作树和文件；不要用旧 .git 指针覆盖新仓库，也不恢复旧 Run 派发权限。
