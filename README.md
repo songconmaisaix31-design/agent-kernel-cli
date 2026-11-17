@@ -1,122 +1,214 @@
+<div align="center">
+
 # agent-kernel-cli
 
-Agent-Kernel 当前的独立 CLI 原型：在 Windows 上启动一个本地任务，查询状态、停止其所属进程并读取结果，用于探索可检查的任务执行。运行时不依赖 Orca。
+Run one local task, query its state, stop the process tree it owns, and read back what actually happened. Windows only, no daemon.
 
-- **当前能力**：普通程序的 `start`、`status`、`stop`、`result`，超时处理与 JSON 记录；一个 store 同时只运行一个任务，尚无多 Agent 编排、队列或自动重试。
-- **验证阶段**：普通程序路径已有确定性测试；Codex 只读调用已有接入代码，普通终端无模型沙箱检查已有通过记录，真实 Codex 任务的成功验收仍待完成。不同阶段的证据见下文。
-- **从这里开始**：[运行说明](#运行) · [验证与真实结果](#验证与真实结果) · [限制与后续](#限制与后续)。这是实验原型，普通程序模式只适用于受信任程序，Windows Job 不是文件或网络沙箱。
+在本机跑一个任务、查它的状态、停掉它拥有的整棵进程树、再回读到底发生了什么。仅 Windows，无后台服务。
 
-多 Agent 协作契约与协议是后续探索方向。[基于 stablyai/orca 的旧 Kernel 实验](https://github.com/songconmaisaix31-design/orca-kernel/tree/kernel/v01-managed-dispatch)属于另一套实现，其父子 Agent 实验不代表本 CLI 已具备同等能力。
+![Node](https://img.shields.io/badge/node-%3E%3D24-blue.svg)
+![Version](https://img.shields.io/badge/version-0.1.0-blue.svg)
+![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-源码来源：`src/duration-policy.ts` 只改编旧 Orca-Kernel 实验提交 `01bd406abb787a6b2fd8064e66bcefb75971b8ff` 的 `src/main/runtime/orchestration/kernel-run-limits.ts` 中 `parseKernelLimits` 的有限正整数和未知字段拒绝规则；`tests/duration-policy.test.mjs` 改编同目录 `kernel-run-limits.test.ts` 的无效数值和对象反例。保留原 MIT / Copyright (c) 2026 Lovecast Inc. 于 [LICENSE](LICENSE)。未复制协调器、数据库、Electron、规则图或旧测试框架。
+</div>
 
-## 运行
+> **How to read this page / 怎么读这页**
+> English first, then the same content in Chinese — not a summary, not a separate half.
+> 每段英文在前、同一内容的中文紧跟在后；不是摘要，也没有单独的"中文版"。
 
-本机 Windows 11 家庭中文版 10.0.26200，Node 24.16.0、pnpm 10.24.0、Codex 0.154.0。运行无 npm 依赖；构建使用 TypeScript。普通程序模式无需管理员权限，不修改执行策略。
+---
 
-```powershell
-cd C:\Users\DW\agent-kernel-cli
-pnpm install --frozen-lockfile
-pnpm build
-$task = node dist/cli.js start --agent program --cwd . -- node tests/fixtures/program.mjs success | ConvertFrom-Json
-node dist/cli.js status $task.id
-node dist/cli.js result $task.id
-$task = node dist/cli.js start --agent program --cwd . --timeout-ms 30000 -- node tests/fixtures/program.mjs tree | ConvertFrom-Json
-node dist/cli.js stop $task.id
-```
+## At a glance · 一眼看懂
 
-默认记录在 `~/.agent-kernel-cli`，可用 `--store <目录>` 指定。响应均为 JSON；start 返回 starting 不代表已执行，需看 running 或终态。一个 store 同时一个任务，无队列、自动重试或后台服务安装。支持普通文件夹。result 对失败/超时/未完成/无法核实返回非零。
+| | |
+|---|---|
+| **Problem<br/>问题** | You start a local agent process and lose the ability to answer three questions: is it still running, did it really finish, and did anything it spawned survive.<br/>启动一个本地 Agent 进程之后，三个问题就答不上来了：它还在跑吗、它真的跑完了吗、它派生的东西还有活着的吗。 |
+| **Fix<br/>做法** | A CLI that writes a JSON run record per task, keeps one task per store, and stops through a Windows Job object so the whole tree dies together. Every response is JSON on stdout.<br/>一个 CLI：每个任务写一份 JSON 记录，一个 store 同时只跑一个任务，停止走 Windows Job 对象，整棵树一起结束。每次响应都是 stdout 上的 JSON。 |
+| **Cost<br/>代价** | Node 24+, pnpm 10.24.0, a TypeScript build step. Zero runtime npm dependencies. Codex mode additionally reuses an already-logged-in ChatGPT account; it does not accept an API key.<br/>需要 Node 24+、pnpm 10.24.0、一步 TypeScript 构建。运行时零 npm 依赖。Codex 模式额外复用已登录的 ChatGPT 账号，不接受 API Key。 |
+| **Not<br/>不是** | Not a sandbox, not an orchestrator, not a queue. Program mode runs trusted programs only, and the Windows Job is a process boundary, not a file or network boundary.<br/>不是沙箱、不是编排器、不是队列。普通程序模式只跑受信任的程序，Windows Job 是进程边界，不是文件或网络边界。 |
 
-Codex 模式只复用已登录的 ChatGPT 账号，固定只读沙箱和拒绝权限升级，保留用户规则；不支持 API Key 计费或自动登录。通过 PATH 查找已有原生或官方 npm Codex，特殊安装可用 `AGENT_KERNEL_CODEX_BIN` 指向已有原生程序。不复制凭据或改变系统 PATH。参数参照 [官方非交互模式](https://learn.chatgpt.com/docs/non-interactive-mode)。**当前真实只读验收受阻；先完成下文无模型检查及证据审核，再按授权顺序执行模型验收，不应重复触发。普通终端诊断不证明外层 Job 独立。**
+## The problem · 问题在哪
 
-```powershell
-node dist/cli.js start --agent codex --cwd C:\Users\DW\agent-kernel-cli-practice --prompt 'Read task-data.json. Return project and sum of units. Do not change files.' --timeout-ms 240000
-```
+A child process is easy to start and hard to account for. Four failure modes show up immediately:
 
-## 验证与真实结果
-
-`pnpm build`、`pnpm test`：最新 **37/37 通过**。覆盖成功/失败/超时、重复停止、三代进程回收、旁观进程存活、监督者退出、中文/引号参数、过期/错误主机拒绝，以及 Windows 原子状态更新的短暂重命名失败。初版的 PowerShell UTF-8 解码和控制输入阻塞问题已修复。
-
-另在剔除 Orca PATH 和会话环境变量的独立子进程中完成普通任务，succeeded / exited；回执在 `.agent-kernel-cli/acceptance/independent-runtime.json`。没有为这项核对关闭稳定 Orca。
-
-2026-09-12 02:54:34—02:57:24（北京时间）执行了**唯一一次真实 Codex 调用**。练习仓库 `C:/Users/DW/agent-kernel-cli-practice`，main / `065d4be`。任务 `992427fc-939d-438a-a720-79da76ab03f3` 的实际最终消息：
+起一个子进程很容易，说清它到底怎么了很难。四种失败模式一上来就会遇到：
 
 ```text
-exec_command failed: Failed to create unified exec process:
-orchestrator_helper_launch_canceled: ShellExecuteExW failed to launch setup helper: 1223
+start a detached child
+├── it exits 0 but wrote an error into the record   → success or failure?
+├── it times out, but a grandchild keeps the pipe open → is it gone?
+├── the supervisor dies                              → who owns the run now?
+└── a stale record names a PID that was reused       → is stopping it safe?
 ```
 
-**FAILED：没有读到文件，没有真实成功的汇总结果。** Codex exit 0，但任务报告错误，CLI 保存 failed / codex_incomplete，Job 进程已确认退出。WebSocket 的有限重连/HTTPS 回退、可选 Vercel MCP 鉴权错误均留日志；未重新提交模型任务。随后修正了结果解析：重连警告不能单独认定失败，最终 `{error: ...}` 仍是失败；同一真实日志的离线复核确认 1223，历史失败记录未改写。
+Each question has a cheap wrong answer. "Exit code 0 means success" is wrong when the agent reports a structured error. "Kill the PID" is wrong when the PID has been recycled. "The process is gone" is wrong when a descendant still holds the pipe.
 
-```powershell
-node dist/cli.js result 992427fc-939d-438a-a720-79da76ab03f3 --store .agent-kernel-cli/real
+每个问题都有一个便宜的错误答案。Agent 报了结构化错误时，"退出码 0 就是成功"是错的；PID 被复用时，"杀掉那个 PID"是错的；后代进程还握着管道时，"进程没了"是错的。
+
+This CLI exists to make those three answers explicit instead of assumed: a phase machine ending in `unverifiable` rather than a guess, hostname and PID checks before any PID-based stop, and a Job object that owns the tree.
+
+这个 CLI 的作用就是让这三个答案变成显式的、而不是假设的：一台以 `unverifiable` 收尾而不是靠猜的状态机；任何基于 PID 的停止之前先校验主机名与 PID；以及一个拥有整棵树的 Job 对象。
+
+## The idea · 思路
+
+Five nouns, each with one testable rule.
+
+五个名词，每个配一条可检验的规则。
+
+| Noun · 名词 | Where · 位置 | Rule · 规则 |
+|---|---|---|
+| **Store** | `src/run-store.ts` | One directory, default `~/.agent-kernel-cli`. Writes are atomic: temp file plus rename, with bounded retries on Windows `EPERM`/`EACCES`/`EBUSY`; POSIX errors are not retried.<br/>一个目录，默认 `~/.agent-kernel-cli`。写入是原子的：临时文件加重命名，Windows 的 `EPERM`/`EACCES`/`EBUSY` 有次数上限的重试；POSIX 错误不重试。 |
+| **Task** | `src/task-lifecycle.ts` | One store runs at most one task. A second `start` against an owned store is refused, not queued.<br/>一个 store 同时最多跑一个任务。对已被占用的 store 再 `start` 会被拒绝，不会排队。 |
+| **Phase** | `src/run-types.ts` | Eight phases: `starting`, `running`, `stopping`, `succeeded`, `failed`, `stopped`, `timed_out`, `unverifiable`. `starting` never means "began".<br/>八个状态：`starting`、`running`、`stopping`、`succeeded`、`failed`、`stopped`、`timed_out`、`unverifiable`。`starting` 从来不等于"已经开始"。 |
+| **Job** | `src/windows-process.ts`, `src/windows/job.cs` | The task runs inside a Windows Job object with no breakaway, so `stop` terminates the tree it actually created.<br/>任务跑在一个不允许 breakaway 的 Windows Job 对象里，所以 `stop` 终止的是它真正创建出来的那棵树。 |
+| **Boundary** | `src/process-environment.ts`, `src/codex-command.ts` | The child never inherits `ORCA_*`, `CODEX_*` session keys or `OPENAI_API_KEY`; Codex always runs read-only with approval escalation denied.<br/>子进程绝不继承 `ORCA_*`、`CODEX_*` 会话键或 `OPENAI_API_KEY`；Codex 一律以只读运行，并拒绝权限升级。 |
+
+One test you can run to check the claim: `stop` a task that spawned a grandchild and confirm the sentinel process outside the Job is still alive. That is what `tests/lifecycle.test.mjs` does.
+
+可以立刻做的验证：`stop` 一个派生过孙进程的任务，确认 Job 之外的哨兵进程仍然活着。`tests/lifecycle.test.mjs` 做的就是这件事。
+
+## Capabilities · 能力清单
+
+Four commands. `--store <folder>` applies to all of them.
+
+四个命令。`--store <目录>` 对全部生效。
+
+| Command · 命令 | What it does · 做什么 | Exit behaviour · 退出行为 |
+|---|---|---|
+| `start` | `--agent program --cwd <dir> -- <exe> [args]`, or `--agent codex --cwd <dir> --prompt <text>` / `--prompt-file <path>`. Returns the task ID as JSON.<br/>两种形态：`--agent program --cwd <dir> -- <exe> [args]`，或 `--agent codex --cwd <dir> --prompt <文本>` / `--prompt-file <路径>`。以 JSON 返回任务 ID。 | Non-zero on invalid arguments<br/>参数非法时非零 |
+| `status [id]` | Reads the run record. With no ID, reports the active task, or `{"phase":"idle"}`.<br/>读运行记录。不给 ID 时报告当前活动任务，没有则为 `{"phase":"idle"}`。 | Always `0`<br/>总是 `0` |
+| `stop <id>` | Terminates the process tree inside the task's Job.<br/>终止该任务 Job 内的整棵进程树。 | Non-zero when the phase is not terminal<br/>状态非终态时非零 |
+| `result <id>` | Reads the final output and exit result.<br/>读最终输出与退出结果。 | Non-zero for `failed`, `timed_out`, `unverifiable`, and non-terminal phases<br/>`failed`、`timed_out`、`unverifiable` 及非终态时非零 |
+
+Codex mode constraints, all enforced in code rather than by convention: prompt length capped at 64,000 characters; prompt or prompt-file, not both; `--ask-for-approval never exec --sandbox read-only --json --ephemeral --color never` plus `--permission-profile :read-only`; binary resolved from `AGENT_KERNEL_CODEX_BIN` or a PATH lookup; no credential copying, no login automation, no API-key billing.
+
+Codex 模式的约束都写在代码里而不是靠约定：prompt 上限 64,000 字符；prompt 与 prompt-file 二选一；固定 `--ask-for-approval never exec --sandbox read-only --json --ephemeral --color never` 加 `--permission-profile :read-only`；二进制从 `AGENT_KERNEL_CODEX_BIN` 或 PATH 解析；不复制凭据、不自动登录、不走 API Key 计费。
+
+## Quickstart · 快速开始
+
+### Requirements · 环境要求
+
+Windows. Node 24 or newer, pnpm 10.24.0. No runtime npm dependencies; the build needs TypeScript.
+
+Windows。Node 24 及以上、pnpm 10.24.0。运行时零 npm 依赖；构建需要 TypeScript。
+
+### 1. Build · 构建
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build          # tsc + copies src/windows/{job.cs,job.ps1} into dist/windows
 ```
 
-简明回执 `.agent-kernel-cli/acceptance/real-call.json`；完整日志在 `.agent-kernel-cli/real/runs/<任务 ID>/`，留本地不入 Git。练习文件前后 SHA-256 相同，Git 干净。未购买额度。
+### 2. Run a program task · 跑一个普通程序任务
 
-## 只读诊断续验（2026-09-12）
-
-**当前结论：普通终端无模型沙箱检查通过；直接 Codex 和新 CLI 真实验收均未执行，原两次授权累计仍为 0/2。** 原始 `sandbox-check-20260912T022746843Z/` 保持 `EXITED_REVIEW_REQUIRED`，另存审查记录 `sandbox-review-20260912T022746843Z.json`。已审查通过的无模型检查无需重跑。
-
-本次记录包含预定 PowerShell 命令的 START、stdout `sandbox-ready`、实际 Node/Codex 入口 exit 0、完整捕获且为空的 stderr，以及同一次初始化后的 `setup provisioning binary completed`、`processed 0 write roots ... errors=[]`、只读 ACL 完成和命令运行器启动。初始化确实执行并完成，不能把前面的 setup-required 行当作最终失败；未见本次权限降级。保留末尾 `hide users ... C:\Users\Default ... SetFileAttributesW ... 5` 的目录属性警告，不将它改写为 ACL 或命令执行失败。外层 Job 归属仍 unknown，严格独立性未证明，脱离进程树的助手退出仍不可核实；不推导历史 1223 的根因或全面沙箱安全性。
-
-当前测试目录 `C:\Users\DW\.codex` 仍是旧 ChatGPT 账号，与当前 Orca 账号不同。官方 `account/read`、`account/rateLimits/read` 在未创建线程或提交模型任务的情况下确认：`ordinaryUsageAllowed=false`、Codex 周额度使用率 100%。账号检查保存在本地 `account-preflight-20260912T023812446Z.json`，未包含凭据。没有复制凭据、购买额度或使用额度重置；需要本人在测试目录登录可用账号，再复查授权与余额后继续 A→B。`login status` 本身只显示已有 ChatGPT 登录，不能单独证明还有额度。
-
-本人登录入口（仅在子 PowerShell 中设置测试 CODEX_HOME，按提示使用有额度的 ChatGPT 账号）：
-
-```powershell
-& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -Command { $env:CODEX_HOME='C:\Users\DW\.codex'; & 'C:\Program Files\nodejs\node.exe' 'C:\Users\DW\AppData\Roaming\npm\node_modules\@openai\codex\bin\codex.js' login --device-auth }
+```bash
+task=$(node dist/cli.js start --agent program --cwd . -- node tests/fixtures/program.mjs success)
+node dist/cli.js status "$task"
+node dist/cli.js result "$task"
 ```
 
-本机 `help exec` 已确认 `exec --sandbox read-only`，现有产品使用 `--ask-for-approval never exec --sandbox read-only --json --ephemeral --color never -`；不得照搬 `sandbox --permission-profile`。A/B 均须明确传入测试 CODEX_HOME、同一执行器和练习目录，并核对 B 的子进程记录与实际环境。随机答案不进入提示，A 失败不执行 B，账号切换不重置原两次授权。
+`start` prints a JSON object; `status` moves from `starting` to `running` and then to a terminal phase. `result` exits non-zero if the task did not finish successfully.
 
-本轮首次产品测试为 31/33：两处 `supervisor.log` 均记录状态文件原子重命名 `EPERM` 导致监督进程退出，原目录 `tests/run-EhRf7S/`、`tests/run-MBujnv/` 和占用保留。已窄修 Windows `EPERM/EACCES/EBUSY` 重命名最多额外尝试 5 次，每次等待 50ms；持续错误原样抛出，原文件不删除，POSIX 和其他错误不重试，不改 Job/停止机制。确定性反例修复前 2/4、修复后 4/4；最终构建和全部 37 项测试通过，输出另存 `product-tests-after-state-rename.log`。这些均不包含真实模型任务。
+`start` 打印一个 JSON 对象；`status` 会从 `starting` 走到 `running`，再走到某个终态。任务没有成功结束时，`result` 以非零码退出。
 
-以下为保留的历史诊断和执行边界：
+### 3. Verify · 验证
 
-从 `1f29f957723f5515049fecd5087dc3f784cae438` 继续；相对指定的 `7443c1b` 仅有 README/TODO 更新。**本轮新增真实模型任务 0/2；直接 Codex 与新 CLI 均未开始真实验收。** 原失败回执不改写，新诊断单独记录于 `.agent-kernel-cli/acceptance/20260912-sandbox-diagnosis.json`。
-
-| 核对项 | 日常 Codex 会话 | 新 CLI 的 Codex 调用 |
-| --- | --- | --- |
-| 执行器 | npm `@openai/codex`，0.154.0 | 同一 npm 包及原生 `codex.exe`，由 Node 入口启动 |
-| 配置目录 | `C:/Users/DW/AppData/Roaming/orca/codex-runtime-home/home` | 子进程未设置 CODEX_HOME，读取 `C:/Users/DW/.codex/config.toml` |
-| 权限 | 当前会话记录为 `danger-full-access`，启动参数含 `--yolo` | `--ask-for-approval never exec --sandbox read-only --json --ephemeral --color never -` |
-| 工作目录 | 旧 Orca Kernel 仓库 | `C:/Users/DW/agent-kernel-cli-practice`，没有项目级 Codex 配置 |
-| 进程启动 | Orca 终端中的交互会话 | 普通用户、非管理员，Windows Job 内启动，无 breakaway |
-
-两份配置均选择 `gpt-6-astra` / `xhigh` / Windows `elevated`，但文件不完全相同；日常可用不能证明只读沙箱可用。旧 `.codex/.sandbox/sandbox.2026-09-11.log` 记录 02:55:02 刷新完成、errors=[]，随后 02:55:03 报 `sandbox users missing or incompatible with marker version`，之后出现助手启动错误 1223。当前两个专用账户均存在且启用，两处标记均为 version 5，且共用账户。因此只能定位到官方沙箱准备/兼容检查阶段；**不能由 1223 断定用户取消，亦不能排除新 CLI 的 Job/非交互启动条件参与失败**。官方 `doctor --json` 45 秒超时，未得到诊断报告，没有重试。
-
-本次从实际 HEAD `f69b172852b747594cc63385ebbd24296bfd8a34`、干净工作区继续，保留已有提交。用户已在手动打开的普通 PowerShell 中运行原脚本，报告两项查询成功、非管理员、未识别开发祖先，祖先链为 `explorer.exe → pwsh.exe → pwsh.exe`，但 `insideAnyJob=true`，仍被原第 57 行拒绝。**真正的前置阻断是 `$eligible` 中的 `-not $insideJob`；启动 Codex 子进程后还有相同限制。** [IsProcessInJob 的官方定义](https://learn.microsoft.com/en-us/windows/win32/api/jobapi/nf-jobapi-isprocessinjob)说明空 Job 句柄只查询任意 Job，不能识别创建者或用途。先前将未知 Job 一律拒绝过于严格；不能猜测其来源，也不能仅由祖先中没有 Orca 证明完全独立。
-
-已窄修 `.agent-kernel-cli/acceptance/check-windows-sandbox.ps1`，增加显式 `-OrdinaryTerminalDiagnostic`，将诊断准入与严格独立性分开。普通用户、查询成功、未识别开发祖先时，允许用户在手动终端执行无模型检查；未知外层 Job 保留 `insideAnyJob=true`、`jobOwnership=unknown`，严格独立性仍未证明，并显示提示。该参数只是用户对手动启动的声明，不替代现场查询。默认严格模式仍拒绝任意 Job；两种模式均拒绝已识别开发祖先、管理员或查询失败。失败查询值记为 null/unknown，预检保存 `preflight-<时间>.json` 后停止。子进程沿用同样判断，不移除外层 Job。
-
-专用 `check-windows-sandbox.tests.ps1` 通过 **19 项确定性测试**，只加载判断函数与执行前的阻断条件，覆盖未知 Job、开发祖先、查询失败、管理员及子进程继承；不启动 Codex。脚本和专用测试纳入 Git；旧脚本副本 `check-windows-sandbox.before-ordinary-terminal.ps1`、原失败回执和历史诊断保留本地，新结果为 `20260912-ordinary-terminal-script-fix.json`。本轮未重跑产品构建或原 33 项测试，未执行实际沙箱命令、系统变更或模型调用；模型额度仍为 **0/2**。
-
-随后用户手动运行普通终端检查，原记录保留在 `sandbox-check-20260912T015158737Z/`。`stderr.log` 的实际错误为 `error: the following required arguments were not provided: --permission-profile <NAME>`；stdout 和沙箱日志增量均为空。`result.json` 记录 Node 入口 PID 61264、exit 2、未超时、完整捕获输出、脚本异常为空。官方 npm 入口将参数逐项传给原生 Codex，并转交其退出码；此次失败定位于 Codex 参数解析，不能据此判断旧 1223、账户权限或沙箱初始化。外层 Job 仍为 unknown，严格独立性仍未证明。
-
-已按同一固定二进制的 `help sandbox` 修正内部参数：显式传入 `--permission-profile :read-only`，保留 `windows.sandbox="elevated"`，移除旧 `sandbox_mode` 覆盖；[官方权限文档](https://learn.chatgpt.com/docs/permissions)将 `:read-only` 定义为内置只读配置，无需新增用户配置。原 PowerShell 调用命令的语法有效，缺项位于脚本生成的 Codex 参数。失败时现在显示最多 8 行脱敏错误摘要及记录目录，并区分 stderr 为空和未完整捕获。
-
-本次 `pwsh -NoProfile -File .agent-kernel-cli/acceptance/check-windows-sandbox.tests.ps1` **26/26 通过**：保留原 19 项准入检查，增加真实 Node 测试进程的逐项参数/工作目录传递（空格、中文、引号、末尾路径分隔符），以及摘要脱敏、长度限制和捕获状态检查。仅执行帮助读取和本地确定性测试，未启动实际沙箱命令、模型任务或 doctor，未改系统、持久配置和产品 Job/停止代码；未重跑产品构建和 33 项产品测试。参数传递检查不等于沙箱实际通过，旧 1223 的原因仍未确定。
-
-以下是已经完成并审查通过的无模型检查命令，保留供追溯，本轮不要重跑：
-
-```powershell
-& 'C:\Program Files\PowerShell\7\pwsh.exe' -NoProfile -File 'C:\Users\DW\agent-kernel-cli\.agent-kernel-cli\acceptance\check-windows-sandbox.ps1' -OrdinaryTerminalDiagnostic
+```bash
+pnpm test           # node --test --test-concurrency=1 tests/*.test.mjs
 ```
 
-脚本保存并恢复临时 CODEX_HOME 和工作目录，固定已核对的 Codex 二进制，先进入练习目录，再指定 `--permission-profile :read-only`、`windows.sandbox=elevated`，只执行 `Write-Output 'sandbox-ready'`。不读写练习文件、不调用模型、不改持久化配置，不使用 ExecutionPolicy Bypass、自动提权或隐藏窗口。输出、真实退出码和本次时间窗口的沙箱日志增量保存到 `sandbox-check-<时间>/`；并发日志需核对归属。120 秒不返回就记录超时，只请求终止本次创建进程的树；脱离进程树的助手状态记为无法核实，不按进程名批量结束。脚本不会把输出标记自动升级为验收通过，仍须核对实际配置、日志及所有通过条件；普通终端兼容性检查成功也不能冒称严格独立环境验收通过。
+> The commands above are copied from `package.json`, `src/cli.ts` and the previous README. They were **not re-executed while rewriting this page** — no install and no build were run. Treat them as unverified until one successful local run.<br/>
+> 上面的命令摘自 `package.json`、`src/cli.ts` 与上一版 README。改写本页时**没有重新执行**——没装依赖、没跑构建。请以一次成功的本地运行为准，在那之前都算未验证。
 
-官方 elevated 初始化可能创建/修复专用本地账户、文件 ACL、防火墙规则和登录权限，见 [官方 Windows 沙箱说明](https://learn.chatgpt.com/docs/windows/windows-sandbox)。这些是系统状态，且本机与 Orca 管理目录共用沙箱账户，不能承诺对日常沙箱零影响；不需要长期以管理员运行 Kernel，不重装/升级 Codex，不手工改全盘 ACL。检查应输出 `sandbox-ready`、退出码 0，沙箱日志无 setup-required/助手错误且保持 elevated；这仅证明无模型检查通过。若需改稳定 Orca 或仍失败，保留阻塞，不继续折腾 Windows。
+## What has actually been recorded · 已记录的真实结果
 
-如果需要初始化，官方程序为同一 npm 包的 `vendor/x86_64-pc-windows-msvc/codex-resources/codex-windows-sandbox-setup.exe`；脚本会在运行前显示完整路径。只由用户本人决定是否批准 UAC，拒绝降级或完全访问选项。
+This section separates what was measured from what was hoped. Every row is a record kept in the repository or in the previous README, not a fresh run.
 
-无模型前置检查已经通过；账号具备可用额度后，沿用同一执行器、配置目录、权限与练习目录：先写入不传给提示/stdin/历史的随机文字，直接 Codex 只读验收；成功后轮换文字再经新 CLI 验收。每次均核对实际读取事件、正确输出、退出结果、文件前后内容；直接失败则停止，原授权累计最多两次真实任务且不自动重试。两种真实验收分别记结果，不能互相替代。
+这一节把"测过的"和"希望是的"分开。每一行都是仓库里或上一版 README 留下的记录，不是本次新跑的。
 
-## 限制与后续
+| Item · 项目 | Recorded outcome · 记录结果 | Where · 出处 |
+|---|---|---|
+| Product test run<br/>产品测试 | **37/37 passing** was recorded after the bounded-rename fix. The current tree declares **20 `test(...)` cases in 8 files**; the two numbers differ, so the 37 may include subtests. Neither was re-run for this page.<br/>修复有界重命名后记录为 **37/37 通过**。当前代码树在 8 个文件里声明了 **20 个 `test(...)` 用例**；两个数字不一致，37 可能包含子测试。本次两者都没有重跑。 | `tests/`, previous README<br/>`tests/`、上一版 README |
+| Sandbox acceptance script<br/>沙箱验收脚本 | **19 deterministic checks passed**, then **26/26** after adding real argv/cwd passing and redaction checks.<br/>先 **19 项确定性检查通过**，补入真实参数/工作目录传递与脱敏检查后 **26/26 通过**。 | `.agent-kernel-cli/acceptance/check-windows-sandbox.tests.ps1` |
+| One real Codex call<br/>一次真实 Codex 调用 | On 2026-09-12 the single attempt returned `orchestrator_helper_launch_canceled: ShellExecuteExW failed to launch setup helper: 1223`. Nothing was read, no summary was produced. The CLI stored `failed` / `codex_incomplete`.<br/>2026-09-12 的唯一一次尝试返回 `orchestrator_helper_launch_canceled: ShellExecuteExW failed to launch setup helper: 1223`。没有读到文件，没有产出汇总。CLI 记为 `failed` / `codex_incomplete`。 | Previous README; run log kept local, not in Git<br/>上一版 README；运行日志留在本地，未入库 |
+| Model-task budget<br/>模型任务额度 | 2 authorised, **0 used** at last record. The account check reported the weekly Codex quota at 100% used.<br/>授权 2 次，**已用 0 次**。账号检查显示 Codex 周额度使用率 100%。 | Previous README<br/>上一版 README |
+| Strict Job independence<br/>Job 严格独立性 | **Not proven.** `jobOwnership=unknown`, `insideAnyJob=true`; the ordinary-terminal diagnostic mode allows the check to run without claiming independence.<br/>**未证明。** `jobOwnership=unknown`、`insideAnyJob=true`；普通终端诊断模式允许检查跑起来，但不声称独立性。 | `check-windows-sandbox.ps1` |
+| Root cause of 1223<br/>1223 的根因 | **Unknown.** It was localised to the official sandbox setup/compatibility stage; neither "user cancelled" nor "CLI Job conditions" can be ruled out.<br/>**未知。** 已定位到官方沙箱准备/兼容阶段；既不能断定"用户取消"，也不能排除新 CLI 的 Job 条件参与其中。 | Previous README<br/>上一版 README |
 
-- 官方沙箱检查与该次必要初始化已由用户手动执行并审查通过。当前人工动作是测试 CODEX_HOME 登录可用账号；本轮 Agent 未执行系统变更。首轮失败、旧帮助探测和本次目录属性警告仍保留。
-- 执行后端仅 Windows。Linux/macOS 的 start 明确拒绝；SSH/UNC/WSL 远程路径不接管。只读检查发现现有 WSL2 Ubuntu、Docker Desktop，以及停止的 OrcaKernelLab-v014188/kali-linux；约 32 GB RAM，HypervisorPresent=true。未安装虚拟化软件或启动停止中的系统。
-- 后续 Linux VM 需要已批准的 VM/发行版、Node 24+、Git、已有账号 Codex 和可用只读沙箱；先实现、验收进程组归属、停止/超时/断联/重启，再执行真实只读任务。WSL 环境检查不是 VM 验收。
-- Windows 停止是对本次 Job 内进程的强制终止，依据 [系统 Job Object](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)。程序模式限受信任测试程序，Job 不是文件/网络沙箱，也不能证明外部服务/WMI/远程工作已停止。
-- 监督者失联显示 unverifiable，保留占用，不依据磁盘 PID 杀进程或自动解锁。安全恢复、多用户对抗性隔离、断电耐久性未实现/验收。运行记录含任务正文和输出，调用方应限制敏感输入。
-- 源码通过 `origin/main` 同步至本公开仓库；运行记录、练习仓库和旧成果备份保留本地。恢复旧成果时先把 bundle 克隆到新目录，再按清单恢复工作树和文件；不要用旧 .git 指针覆盖新仓库，也不恢复旧 Run 派发权限。
+Three anti-overclaim rules this project follows, and one it does not yet satisfy:
+
+这个项目遵守三条"不夸大"的规则，还有一条尚未满足：
+
+- An exit code of `0` from the underlying program is not treated as success when the record contains a structured error.<br/>底层程序退出码为 `0` 时，只要记录里有结构化错误，就不当作成功。
+- A transcript of a successful ordinary-terminal check is not promoted to "strictly independent environment".<br/>一次普通终端检查成功，不会被升格为"严格独立环境"。
+- A failed receipt is never rewritten; later diagnoses are stored beside it.<br/>失败回执永不改写；后续诊断另存旁边。
+- Not yet satisfied: proving that a helper which detached from the process tree has exited.<br/>尚未满足：证明脱离进程树的助手进程已经退出。
+
+## Documentation · 文档
+
+| Doc · 文档 | Read it when · 什么场景读它 |
+|---|---|
+| [`LICENSE`](LICENSE) | You need the MIT terms. `duration-policy.ts` is adapted from Orca kernel code, so the original copyright notice is retained here.<br/>需要 MIT 条款时。`duration-policy.ts` 改编自 Orca kernel 代码，因此原始版权声明保留在此。 |
+| [`src/windows/job.cs`](src/windows/job.cs) | You are changing how the Job object is created, watched or terminated.<br/>要改 Job 对象的创建、监视或终止方式时。 |
+| [`.agent-kernel-cli/acceptance/check-windows-sandbox.ps1`](.agent-kernel-cli/acceptance/check-windows-sandbox.ps1) | You are auditing what the Codex read-only check actually does, including its `-OrdinaryTerminalDiagnostic` mode.<br/>要审计 Codex 只读检查到底做了什么，包括它的 `-OrdinaryTerminalDiagnostic` 模式。 |
+| [`.agent-kernel-cli/acceptance/check-windows-sandbox.tests.ps1`](.agent-kernel-cli/acceptance/check-windows-sandbox.tests.ps1) | You are changing the admission rules and need the deterministic checks that pin them.<br/>要改准入规则，需要钉住它们的确定性检查时。 |
+| [`tsconfig.json`](tsconfig.json) | You need the compiler target and module settings.<br/>需要编译目标与模块设置时。 |
+
+The root of the repository also holds a Markdown task list recording which items are done and which remain open, including the two pending model-task authorisations.
+
+仓库根目录还有一份 Markdown 任务清单，记录哪些事项已完成、哪些仍未完成，包括那两次待执行的模型任务授权。
+
+## Repository layout · 仓库结构
+
+```text
+agent-kernel-cli/
+├── src/
+│   ├── cli.ts                  # argument parsing, four commands, JSON output
+│   ├── task-lifecycle.ts       # start / stop / result, one task per store
+│   ├── supervisor.ts           # detached supervisor, exit handling
+│   ├── run-store.ts            # atomic JSON records, Windows rename retries
+│   ├── run-types.ts            # the eight phases
+│   ├── duration-policy.ts      # timeout / output-limit parsing (adapted, MIT)
+│   ├── codex-command.ts        # read-only Codex invocation, binary resolution
+│   ├── task-command.ts         # local-only path validation (rejects UNC/remote)
+│   ├── process-environment.ts  # strips inherited authority and billing keys
+│   ├── windows-process.ts      # Job launching from Node
+│   └── windows/job.cs, job.ps1 # the Job object implementation
+├── tests/                      # 8 files, 20 test() cases, plus fixtures/
+├── scripts/copy-runtime.mjs    # copies the Job sources into dist/
+├── .agent-kernel-cli/acceptance/  # sandbox check script and its tests
+├── package.json                # node >=24, pnpm 10.24.0, zero runtime deps
+└── LICENSE                     # MIT, Copyright (c) 2026 Lovecast Inc.
+```
+
+## Status · 状态
+
+Version `0.1.0`, private package, MIT licensed. The program path is the mature half: `start`/`status`/`stop`/`result` with a Job-owned process tree and deterministic tests for success, failure, timeout, repeated stop, three-generation reaping, bystander survival, supervisor exit, Unicode and quoted arguments, stale or wrong-host records, and Windows atomic-rename contention.
+
+版本 `0.1.0`，私有包，MIT 许可。成熟的是普通程序那半边：`start`/`status`/`stop`/`result`，Job 拥有的进程树，以及覆盖成功、失败、超时、重复停止、三代进程回收、旁观进程存活、监督者退出、中文与引号参数、过期或错误主机记录、Windows 原子重命名争斗的确定性测试。
+
+The Codex path is the unfinished half, and the previous README said so: the one real call failed at sandbox setup, the strict Job independence was never proven, and the model-task budget is still 0 of 2 used.
+
+Codex 那半边尚未完成，上一版 README 也是这么写的：唯一一次真实调用在沙箱准备阶段失败，Job 严格独立性从未被证明，模型任务额度仍是 0/2。
+
+Known limits, stated rather than hidden:
+
+边界写出来而不是藏起来：
+
+- **Windows only.** `start` rejects Linux/macOS outright. SSH, UNC and WSL remote paths are not handled, and remote execution does not exist.<br/>**只支持 Windows。** `start` 直接拒绝 Linux/macOS。SSH、UNC、WSL 远程路径不接管，远程执行不存在。
+- **Program mode is for trusted programs.** There is no shell and no sandbox for it, and the Windows Job is not a file, network or WMI boundary.<br/>**普通程序模式只适用于受信任程序。** 它既没有 shell 也没有沙箱，Windows Job 不是文件、网络或 WMI 边界。
+- **No queue, retry or daemon.** One task per store, no automatic retry, no service installation, no multi-agent orchestration.<br/>**没有队列、重试、后台服务。** 一个 store 一个任务，无自动重试，无服务安装，无多 Agent 编排。
+- **Supervisor loss keeps the lease.** The record becomes `unverifiable` and stays occupied; nothing kills by a PID read off disk.<br/>**监督者失联会保留占用。** 记录变为 `unverifiable` 并保持占用；不会依据磁盘上的 PID 去杀进程。
+- **Not implemented:** safe recovery from an unverifiable owner, multi-user adversarial isolation, and power-loss durability.<br/>**尚未实现：** 失联占用的安全恢复、多用户对抗性隔离、断电耐久性。
+- **Run records are sensitive.** They contain the task body and the captured output, so callers must limit what they pass in.<br/>**运行记录是敏感数据。** 其中包含任务正文与捕获输出，调用方必须限制传入内容。
+
+The previous version of this page claimed a `37/37` test run; that number is preserved above as a record, with its source and its mismatch against the 20 declarations now visible in the tree. A reader who re-runs `pnpm test` gets the number that matters today.
+
+上一版这一页主张了 `37/37` 的测试结果；这个数字作为记录保留在上面，同时标明了出处，以及它与当前代码树里可见的 20 个声明之间的差异。重跑 `pnpm test` 的人拿到的是今天的数字。
+
+## License · 许可
+
+MIT © 2026 Lovecast Inc. See [`LICENSE`](LICENSE).
+
+MIT © 2026 Lovecast Inc.，见 [`LICENSE`](LICENSE)。
